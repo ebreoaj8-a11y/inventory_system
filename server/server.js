@@ -15,14 +15,69 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
-// MIDDLEWARE
+// MONGODB CONNECTION
+let connectionPromise = null;
+
+async function connectDB() {
+  if (mongoose.connection.readyState === 1) {
+    return;
+  }
+
+  if (!process.env.MONGO_URI) {
+    throw new Error('MONGO_URI environment variable is missing.');
+  }
+
+  if (!connectionPromise) {
+    connectionPromise = mongoose
+      .connect(process.env.MONGO_URI, {
+        serverSelectionTimeoutMS: 10000
+      })
+      .then(() => {
+        console.log('MongoDB Connected Successfully!');
+      })
+      .catch((error) => {
+        connectionPromise = null;
+        throw error;
+      });
+  }
+
+  await connectionPromise;
+}
+
+// CORS
+const allowedOrigins = [
+  'http://localhost:5173',
+  ...CLIENT_URL.split(',').map((url) => url.trim())
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: CLIENT_URL
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('Origin not allowed by CORS.'));
+    }
   })
 );
 
+// JSON MIDDLEWARE
 app.use(express.json({ limit: '1mb' }));
+
+// DATABASE CONNECTION MIDDLEWARE
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error('Database connection failed:', error.message);
+
+    res.status(503).json({
+      message: 'Database connection is unavailable.'
+    });
+  }
+});
 
 // HEALTH CHECK
 app.get('/', (req, res) => {
@@ -71,25 +126,24 @@ app.use((error, req, res, next) => {
   });
 });
 
-// START SERVER
+// LOCAL DEVELOPMENT
 async function startServer() {
-  if (!process.env.MONGO_URI) {
-    console.error('MONGO_URI is missing in the .env file.');
-    process.exit(1);
-  }
-
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-
-    console.log('MongoDB Connected Successfully!');
+    await connectDB();
 
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
   } catch (error) {
-    console.error('MongoDB connection failed:', error.message);
+    console.error('Failed to start server:', error.message);
     process.exit(1);
   }
 }
 
-startServer();
+// VERCEL SERVERLESS MODE
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+// EXPORT EXPRESS APP FOR VERCEL
+module.exports = app;
