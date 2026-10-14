@@ -44,21 +44,62 @@ async function connectDB() {
   await connectionPromise;
 }
 
-// CORS
-const allowedOrigins = [
-  'http://localhost:5173',
-  ...CLIENT_URL.split(',').map((url) => url.trim())
-].filter(Boolean);
+// CORS CONFIGURATION
+// Allow deployed React website and local Flutter Web.
+// Flutter Web may use a different localhost port.
+
+const allowedOrigins = new Set(
+  CLIENT_URL.split(',')
+    .map((url) => url.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
+
+allowedOrigins.add('http://localhost:5173');
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(origin);
+
+    const isLocalHost =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '[::1]';
+
+    return parsed.protocol === 'http:' && isLocalHost;
+  } catch (_) {
+    return false;
+  }
+}
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
 
-      return callback(new Error('Origin not allowed by CORS.'));
-    }
+      return callback(
+        new Error('Origin not allowed by CORS.')
+      );
+    },
+    methods: [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS'
+    ],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization'
+    ]
   })
 );
 
@@ -71,7 +112,10 @@ app.use(async (req, res, next) => {
     await connectDB();
     next();
   } catch (error) {
-    console.error('Database connection failed:', error.message);
+    console.error(
+      'Database connection failed:',
+      error.message
+    );
 
     res.status(503).json({
       message: 'Database connection is unavailable.'
@@ -135,7 +179,11 @@ async function startServer() {
       console.log(`Server running on port ${PORT}`);
     });
   } catch (error) {
-    console.error('Failed to start server:', error.message);
+    console.error(
+      'Failed to start server:',
+      error.message
+    );
+
     process.exit(1);
   }
 }
